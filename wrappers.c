@@ -29,7 +29,10 @@ int Execve(const char* filename, char* const argv[], char*
 {
   int ret;
   if ((ret = execve(filename, argv, envp)) == -1)
-    unix_error("execve error");
+  {
+    printf("%s: Command not found.\n", argv[0]);
+    exit(0);
+  }
   return ret;
 }
 
