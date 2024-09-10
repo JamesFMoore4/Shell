@@ -16,6 +16,7 @@ joblst_t* job_lst;
 extern char** environ;
 volatile sig_atomic_t pid;
 volatile sig_atomic_t fgpid;
+char fgcmd[MAXLINE];
 
 int main(void)
 {
@@ -65,14 +66,17 @@ void eval(char* cmd)
       Sigprocmask(SIG_SETMASK, &prev, NULL);
       Execve(argv[0], argv, environ);
     }
+
+    Setpgid(pid, 0);
     
     if (!bg)
     {
+      strcpy(fgcmd, cmd);
       fgpid = pid;
       pid = 0;
       Sigprocmask(SIG_SETMASK, &prev, NULL);
       while(!pid);
-      fgpid = 0;
+      fgpid = pid = 0;
     }
     else
     {
@@ -85,6 +89,7 @@ void eval(char* cmd)
   }
 }
 
+//TODO: Add more built-in commands
 int builtin(char** argv)
 {
   if (!strcmp(argv[0], "quit"))
@@ -127,28 +132,49 @@ int parseline(char* cmd, char** argv)
 void sigchld_handler(int sig)
 {
   sigset_t mask, prev;
-  int status;
+  int status, olderrno;
   pid_t ret_pid;
 
-  Sigfillset(&mask);  
-  while ((ret_pid = Waitpid(-1, &status, 0)) > 0)
+  olderrno = errno;
+  Sigfillset(&mask);
+  
+  while ((ret_pid = waitpid(-1, &status, WUNTRACED | WNOHANG)) > 0)
   {
     if (ret_pid == fgpid)
       pid = ret_pid;
+    
     if (WIFSIGNALED(status))
-      printf("Process %d terminated by signal %d\n", ret_pid, WTERMSIG(status));
+      printf("\nProcess %d terminated by signal %d\n", ret_pid, WTERMSIG(status));
+    
     Sigprocmask(SIG_BLOCK, &mask, &prev);
     remove_job_p(job_lst, ret_pid);
     Sigprocmask(SIG_SETMASK, &prev, NULL);
   }
+  
+  errno = olderrno;
 }
 
 void sigtstp_handler(int sig)
 {
+  sigset_t mask, prev;
+
+  Sigfillset(&mask);
   
+  if (fgpid)
+  {
+    Kill(-fgpid, SIGTSTP);
+    Sigprocmask(SIG_BLOCK, &mask, &prev);
+    add_job(job_lst, fgpid, fgcmd);
+    Sigprocmask(SIG_SETMASK, &prev, NULL);
+  }
+  printf("\n");
+  pid = fgpid;
 }
 
 void sigint_handler(int sig)
 {
-  
+  if (fgpid)
+    Kill(-fgpid, SIGINT);
+  printf("\n");
+  pid = fgpid;
 }
