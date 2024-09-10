@@ -23,11 +23,13 @@ typedef struct
 } joblst_t;
 
 joblst_t* init_jobs(void);
-void add_job(joblst_t* job_lst, pid_t pid, char* cmd);
+void add_job(joblst_t* job_lst, pid_t pid, char* cmd, status_t stat);
 void remove_job(joblst_t* job_lst, jid_t jid);
 void remove_job_p(joblst_t* job_lst, pid_t pid);
 void show_jobs(joblst_t* job_lst);
 void del_jobs(joblst_t* job_lst);
+job_t* get_job(joblst_t* job_lst, jid_t jid);
+job_t* get_job_p(joblst_t* job_lst, pid_t pid);
 const char* stat_str(status_t stat);
 
 

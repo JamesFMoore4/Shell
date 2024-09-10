@@ -7,6 +7,8 @@
 void eval(char* cmd);
 int parseline(char* cmd, char** argv);
 int builtin(char** argv);
+void fg(char** argv);
+void bg(char** argv);
 
 void sigchld_handler(int sig);
 void sigtstp_handler(int sig);
@@ -29,13 +31,16 @@ int main(void)
   job_lst = init_jobs();
   fgpid = 0;
   pid = 0;
-  
+
   while (1)
   {
     printf("shell> ");
     fgets(cmd, MAXLINE, stdin);
     if (feof(stdin))
+    {
+      del_jobs(job_lst);
       exit(0);
+    }
     eval(cmd);
   }
 
@@ -82,21 +87,178 @@ void eval(char* cmd)
     {
       printf("%d %s", pid, cmd);
       Sigprocmask(SIG_BLOCK, &mask_all, NULL);
-      add_job(job_lst, pid, cmd);
+      add_job(job_lst, pid, cmd, RUNNING);
       Sigprocmask(SIG_SETMASK, &prev, NULL);
     }
       
   }
 }
 
-//TODO: Add more built-in commands
 int builtin(char** argv)
 {
   if (!strcmp(argv[0], "quit"))
+  {
+    del_jobs(job_lst);
     exit(0);
+  }
   if (!strcmp(argv[0], "&"))
     return 1;
+  if (!strcmp(argv[0], "jobs"))
+  {
+    if (argv[1])
+      fprintf(stderr, "error: command 'jobs' takes no additional arguments.\n");
+    else
+      show_jobs(job_lst);
+    return 1;
+  }
+  if (!strcmp(argv[0], "bg"))
+  {
+    bg(argv);
+    return 1;
+  }
+  if (!strcmp(argv[0], "fg"))
+  {
+    fg(argv);
+    return 1;
+  }
   return 0;
+}
+
+void fg(char** argv)
+{
+  pid_t job_pid;
+  jid_t jid;
+  job_t* job;
+  sigset_t mask, prev;
+
+  if (!argv[1] || argv[1] && argv[2])
+  {
+    fprintf(stderr, "usage: fg <pid> OR fg %%<jid>\n");
+    return;
+  }
+
+  Sigfillset(&mask);
+
+  if (argv[1][0] == '%')
+  {
+    jid = (jid_t)atoi(argv[1] + 1);
+    
+    if (!jid)
+    {
+      fprintf(stderr, "error: invalid argument '%s'.\n", argv[1]);
+      return;
+    }
+
+    Sigprocmask(SIG_BLOCK, &mask, &prev);
+    if (!(job = get_job(job_lst, jid)))
+    {
+      Sigprocmask(SIG_SETMASK, &prev, NULL);
+      fprintf(stderr, "error: job not found.\n");
+      return;
+    }
+
+    job_pid = job->pid;
+    strcpy(fgcmd, job->cmd);
+    remove_job(job_lst, jid);
+    fgpid = job_pid;
+    pid = 0;
+    
+    Kill(job_pid, SIGCONT);
+    Sigprocmask(SIG_SETMASK, &prev, NULL);
+
+    while(!pid);
+    fgpid = pid = 0;
+  }
+  else
+  {
+    job_pid = (pid_t)atoi(argv[1] + 1);
+    
+    if (!job_pid)
+    {
+      fprintf(stderr, "error: invalid argument '%s'.\n", argv[1]);
+      return;
+    }
+
+    Sigprocmask(SIG_BLOCK, &mask, &prev);
+    if (!(job = get_job_p(job_lst, job_pid)))
+    {
+      Sigprocmask(SIG_SETMASK, &prev, NULL);
+      fprintf(stderr, "error: job not found.\n");
+      return;
+    }
+
+    strcpy(fgcmd, job->cmd);
+    remove_job_p(job_lst, job_pid);
+    fgpid = job_pid;
+    pid = 0;
+    
+    Kill(job_pid, SIGCONT);
+    Sigprocmask(SIG_SETMASK, &prev, NULL);
+
+    while(!pid);
+    fgpid = pid = 0;
+  }    
+}
+
+void bg(char** argv)
+{
+  pid_t job_pid;
+  jid_t jid;
+  job_t* job;
+  sigset_t mask, prev;
+  
+  if (!argv[1] || argv[1] && argv[2])
+  {
+    fprintf(stderr, "usage: bg <pid> OR bg %%<jid>\n");
+    return;
+  }
+
+  Sigfillset(&mask);
+
+  if (argv[1][0] == '%')
+  {
+    jid = (jid_t)atoi(argv[1] + 1);
+    
+    if (!jid)
+    {
+      fprintf(stderr, "error: invalid argument '%s'.\n", argv[1]);
+      return;
+    }
+
+    Sigprocmask(SIG_BLOCK, &mask, &prev);
+    if (!(job = get_job(job_lst, jid)))
+    {
+      Sigprocmask(SIG_SETMASK, &prev, NULL);
+      fprintf(stderr, "error: job not found.\n");
+      return;
+    }
+
+    job->stat = RUNNING;
+    Kill(-job->pid, SIGCONT);
+    Sigprocmask(SIG_SETMASK, &prev, NULL);
+  }
+  else
+  {
+    job_pid = (pid_t)atoi(argv[1] + 1);
+    
+    if (!job_pid)
+    {
+      fprintf(stderr, "error: invalid argument '%s'.\n", argv[1]);
+      return;
+    }
+
+    Sigprocmask(SIG_BLOCK, &mask, &prev);
+    if (!(job = get_job_p(job_lst, job_pid)))
+    {
+      Sigprocmask(SIG_SETMASK, &prev, NULL);
+      fprintf(stderr, "error: job not found.\n");
+      return;
+    }
+
+    job->stat = RUNNING;
+    Kill(-job->pid, SIGCONT);
+    Sigprocmask(SIG_SETMASK, &prev, NULL);
+  }    
 }
 
 int parseline(char* cmd, char** argv)
@@ -132,10 +294,11 @@ int parseline(char* cmd, char** argv)
 void sigchld_handler(int sig)
 {
   sigset_t mask, prev;
-  int status, olderrno;
+  int status, olderrno, remove;
   pid_t ret_pid;
 
   olderrno = errno;
+  remove = 1;
   Sigfillset(&mask);
   
   while ((ret_pid = waitpid(-1, &status, WUNTRACED | WNOHANG)) > 0)
@@ -145,10 +308,16 @@ void sigchld_handler(int sig)
     
     if (WIFSIGNALED(status))
       printf("\nProcess %d terminated by signal %d\n", ret_pid, WTERMSIG(status));
-    
-    Sigprocmask(SIG_BLOCK, &mask, &prev);
-    remove_job_p(job_lst, ret_pid);
-    Sigprocmask(SIG_SETMASK, &prev, NULL);
+
+    if (WIFSTOPPED(status) && WSTOPSIG(status) == SIGTSTP)
+      remove = 0;
+
+    if (remove)
+    {
+      Sigprocmask(SIG_BLOCK, &mask, &prev);
+      remove_job_p(job_lst, ret_pid);
+      Sigprocmask(SIG_SETMASK, &prev, NULL);     
+    }
   }
   
   errno = olderrno;
@@ -164,7 +333,7 @@ void sigtstp_handler(int sig)
   {
     Kill(-fgpid, SIGTSTP);
     Sigprocmask(SIG_BLOCK, &mask, &prev);
-    add_job(job_lst, fgpid, fgcmd);
+    add_job(job_lst, fgpid, fgcmd, STOPPED);
     Sigprocmask(SIG_SETMASK, &prev, NULL);
   }
   printf("\n");

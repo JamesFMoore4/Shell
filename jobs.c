@@ -12,14 +12,14 @@ joblst_t* init_jobs(void)
   job_lst->tail = NULL;
 }
 
-void add_job(joblst_t* job_lst, pid_t pid, char* cmd)
+void add_job(joblst_t* job_lst, pid_t pid, char* cmd, status_t stat)
 {
   job_t* new_job;
 
   new_job = (job_t*)malloc(sizeof(job_t));
   new_job->pid = pid;
   new_job->jid = ++job_cntr;
-  new_job->stat = RUNNING;
+  new_job->stat = stat;
   new_job->next = NULL;
   new_job->cmd = (char*)malloc(strlen(cmd) + 1);
   strcpy(new_job->cmd, cmd);
@@ -122,6 +122,36 @@ void del_jobs(joblst_t* job_lst)
     ptr = ptr->next;
   }
   free(job_lst);
+}
+
+job_t* get_job(joblst_t* job_lst, jid_t jid)
+{
+  job_t* ptr;
+
+  ptr = job_lst->head;
+  while (ptr)
+  {
+    if (ptr->jid == jid)
+      return ptr;
+    ptr = ptr->next;
+  }
+
+  return NULL;
+}
+
+job_t* get_job_p(joblst_t* job_lst, pid_t pid)
+{
+  job_t* ptr;
+
+  ptr = job_lst->head;
+  while (ptr)
+  {
+    if (ptr->pid == pid)
+      return ptr;
+    ptr = ptr->next;
+  }
+
+  return NULL;
 }
 
 const char* stat_str(status_t stat)
